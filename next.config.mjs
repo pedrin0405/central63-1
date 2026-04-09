@@ -3,6 +3,13 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  experimental: {
+    // Permite importar CSVs maiores no fluxo da tela /forms/import-leads.
+    middlewareClientMaxBodySize: '25mb',
+    serverActions: {
+      bodySizeLimit: '25mb',
+    },
+  },
   transpilePackages: ['leaflet', 'react-leaflet'],
   images: {
     unoptimized: true, // Mantém sua configuração atual

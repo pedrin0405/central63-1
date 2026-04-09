@@ -29,7 +29,8 @@ import {
   Wallet,
   Megaphone,
   LinkIcon,
-  LayoutPanelLeft
+  LayoutPanelLeft,
+  UploadCloud
 } from "lucide-react"
 import {
   Tooltip,
@@ -505,6 +506,16 @@ export function Sidebar({ isOpen, onClose, activeTab, onTabChange, atendimentosC
                 label="Formulários" 
                 active={isActive("formularios", "/forms")} 
                 onClick={() => handleNavigation("formularios", "/forms")}
+                collapsed={isCollapsed}
+              />
+            )}
+
+            {canAccessRoute('/forms/import-leads') && (
+              <SidebarItem 
+                icon={UploadCloud} 
+                label="Importar Leads" 
+                active={isActive("importar-leads", "/forms/import-leads")} 
+                onClick={() => handleNavigation("importar-leads", "/forms/import-leads")}
                 collapsed={isCollapsed}
               />
             )}
