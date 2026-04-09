@@ -1,16 +1,20 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
+  ChevronsUpDown,
   CheckCircle2,
   Database,
   FileSpreadsheet,
   FileUp,
   Loader2,
+  MapPin,
   Menu,
+  Phone,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -22,6 +26,15 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -69,12 +82,20 @@ type ExportLeadRow = {
 }
 
 type ExportFilterOptions = {
+  conversionOptions: string[]
+  eventOptions: string[]
+  propertyReferenceOptions: string[]
+  totalConversionOptions: string[]
   cityOptions: string[]
-  ownerOptions: string[]
-  stageOptions: string[]
-  pipelineOptions: string[]
-  leadStatusOptions: string[]
-  opportunitySourceOptions: string[]
+  stateOptions: string[]
+}
+
+type MultiSelectFieldProps = {
+  label: string
+  options: string[]
+  selectedValues: string[]
+  onChange: (nextValues: string[]) => void
+  placeholder?: string
 }
 
 const MAX_IMPORT_BATCH_BYTES = 4 * 1024 * 1024
@@ -551,6 +572,92 @@ function toCsvValue(value: unknown) {
   return `"${escaped}"`
 }
 
+function getLeadCellValue(lead: ExportLeadRow, key: string) {
+  if (key in lead) {
+    return String(lead[key] ?? "")
+  }
+  return String(lead.raw_data?.[key] ?? "")
+}
+
+function MultiSelectField({
+  label,
+  options,
+  selectedValues,
+  onChange,
+  placeholder = "Selecionar",
+}: MultiSelectFieldProps) {
+  const selectedCount = selectedValues.length
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  const toggleValue = (value: string) => {
+    if (selectedValues.includes(value)) {
+      onChange(selectedValues.filter((item) => item !== value))
+      return
+    }
+    onChange([...selectedValues, value])
+  }
+
+  const handleListWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const element = listRef.current
+    if (!element) return
+
+    if (element.scrollHeight <= element.clientHeight) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    element.scrollTop += event.deltaY
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">{label}</Label>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 w-full justify-between rounded-2xl border-white/60 bg-white/70 px-3 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+          >
+            <span className="truncate text-left text-sm">
+              {selectedCount > 0 ? `${selectedCount} selecionado(s)` : placeholder}
+            </span>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="z-[260] w-[min(90vw,24rem)] rounded-2xl border-white/60 bg-white/95 p-3 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/95">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+            {selectedCount > 0 ? (
+              <Button type="button" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onChange([])}>
+                Limpar
+              </Button>
+            ) : null}
+          </div>
+          <div
+            ref={listRef}
+            onWheelCapture={handleListWheel}
+            className="max-h-64 min-h-0 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain pr-1"
+          >
+            {options.length > 0 ? (
+              options.map((option) => (
+                <label key={`${label}-${option}`} className="flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-sm hover:border-white/60 hover:bg-white/60 dark:hover:border-white/10 dark:hover:bg-white/5">
+                  <Checkbox
+                    checked={selectedValues.includes(option)}
+                    onCheckedChange={() => toggleValue(option)}
+                  />
+                  <span className="truncate">{option}</span>
+                </label>
+              ))
+            ) : (
+              <p className="py-6 text-center text-sm text-muted-foreground">Sem opções disponíveis</p>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
 function downloadLeadsCsv(leads: ExportLeadRow[]) {
   if (!leads.length) return
 
@@ -618,55 +725,76 @@ export default function ImportLeadsPage() {
   const [result, setResult] = useState<ImportResult | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [exportQuery, setExportQuery] = useState("")
-  const [exportCity, setExportCity] = useState("all")
-  const [exportOwnerName, setExportOwnerName] = useState("all")
-  const [exportStage, setExportStage] = useState("all")
-  const [exportPipeline, setExportPipeline] = useState("all")
-  const [exportLeadStatus, setExportLeadStatus] = useState("all")
-  const [exportOpportunitySource, setExportOpportunitySource] = useState("all")
-  const [exportStartDate, setExportStartDate] = useState("")
-  const [exportEndDate, setExportEndDate] = useState("")
-  const [exportLimit, setExportLimit] = useState("2000")
+  const [exportConversion, setExportConversion] = useState<string[]>([])
+  const [exportEvents, setExportEvents] = useState<string[]>([])
+  const [exportConversionDateStart, setExportConversionDateStart] = useState("")
+  const [exportConversionDateEnd, setExportConversionDateEnd] = useState("")
+  const [exportPropertyReference, setExportPropertyReference] = useState<string[]>([])
+  const [exportTotalConversions, setExportTotalConversions] = useState<string[]>([])
+  const [exportCity, setExportCity] = useState<string[]>([])
+  const [exportState, setExportState] = useState<string[]>([])
+  const [exportLimit, setExportLimit] = useState("")
+  const [exportRegisteredCount, setExportRegisteredCount] = useState(0)
+  const [exportLeadsWithNumber, setExportLeadsWithNumber] = useState(0)
   const [exportFormat, setExportFormat] = useState<"csv" | "json">("csv")
+  const [isExportFiltersOpen, setIsExportFiltersOpen] = useState(false)
   const [isLoadingExport, setIsLoadingExport] = useState(false)
   const [isLoadingFilterOptions, setIsLoadingFilterOptions] = useState(false)
   const [exportRows, setExportRows] = useState<ExportLeadRow[]>([])
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportFilterOptions, setExportFilterOptions] = useState<ExportFilterOptions>({
+    conversionOptions: [],
+    eventOptions: [],
+    propertyReferenceOptions: [],
+    totalConversionOptions: [],
     cityOptions: [],
-    ownerOptions: [],
-    stageOptions: [],
-    pipelineOptions: [],
-    leadStatusOptions: [],
-    opportunitySourceOptions: [],
+    stateOptions: [],
   })
 
-  const previewExportRows = useMemo(() => exportRows.slice(0, 20), [exportRows])
+  const filteredExportRows = useMemo(() => exportRows, [exportRows])
+
+  const previewExportRows = useMemo(() => filteredExportRows.slice(0, 20), [filteredExportRows])
   const activeExportFilterCount = useMemo(() => {
     const values = [
       exportQuery.trim(),
-      exportCity !== "all" ? exportCity : "",
-      exportOwnerName !== "all" ? exportOwnerName : "",
-      exportStage !== "all" ? exportStage : "",
-      exportPipeline !== "all" ? exportPipeline : "",
-      exportLeadStatus !== "all" ? exportLeadStatus : "",
-      exportOpportunitySource !== "all" ? exportOpportunitySource : "",
-      exportStartDate,
-      exportEndDate,
+      ...exportConversion,
+      ...exportEvents,
+      exportConversionDateStart,
+      exportConversionDateEnd,
+      ...exportPropertyReference,
+      ...exportTotalConversions,
+      ...exportCity,
+      ...exportState,
     ]
 
     return values.filter(Boolean).length
   }, [
     exportQuery,
+    exportConversion,
+    exportEvents,
+    exportConversionDateStart,
+    exportConversionDateEnd,
+    exportPropertyReference,
+    exportTotalConversions,
     exportCity,
-    exportOwnerName,
-    exportStage,
-    exportPipeline,
-    exportLeadStatus,
-    exportOpportunitySource,
-    exportStartDate,
-    exportEndDate,
+    exportState,
   ])
+
+  const databaseMetrics = useMemo(() => {
+    const conversionBuckets = exportFilterOptions.totalConversionOptions.length
+    const conversionEvents = exportFilterOptions.eventOptions.length
+
+    return {
+      totalRegistered: exportRegisteredCount,
+      leadsWithNumber: exportLeadsWithNumber,
+      uniqueConversionOrigins: exportFilterOptions.conversionOptions.length,
+      conversionEvents,
+      uniqueReferences: exportFilterOptions.propertyReferenceOptions.length,
+      uniqueCities: exportFilterOptions.cityOptions.length,
+      uniqueStates: exportFilterOptions.stateOptions.length,
+      conversionBuckets,
+    }
+  }, [exportFilterOptions, exportRegisteredCount, exportLeadsWithNumber])
 
   const mappedLeads = useMemo<LeadRow[]>(() => {
     const sourceToTarget = new Map(mappingRows.map((row) => [row.sourceHeader, row.targetField]))
@@ -725,7 +853,6 @@ export default function ImportLeadsPage() {
 
   useEffect(() => {
     if (activeTab !== "export") return
-    if (exportFilterOptions.cityOptions.length > 0) return
 
     const loadFilterOptions = async () => {
       setIsLoadingFilterOptions(true)
@@ -735,6 +862,11 @@ export default function ImportLeadsPage() {
           throw new Error(response.error || "Não foi possível carregar os filtros.")
         }
         setExportFilterOptions(response.options)
+        setExportRegisteredCount(response.totalRegistered || 0)
+        setExportLeadsWithNumber(response.leadsWithNumber || 0)
+        if (!exportLimit) {
+          setExportLimit(String(response.totalRegistered || 1))
+        }
       } catch (error: any) {
         toast.error(error.message || "Falha ao carregar opções de filtro.")
       } finally {
@@ -743,7 +875,7 @@ export default function ImportLeadsPage() {
     }
 
     void loadFilterOptions()
-  }, [activeTab, exportFilterOptions.cityOptions.length])
+  }, [activeTab, exportLimit])
 
   const resetFile = () => {
     setCsvFileName("")
@@ -882,15 +1014,15 @@ export default function ImportLeadsPage() {
       const parsedLimit = Number.parseInt(exportLimit, 10)
       const response = await listLeadsForExportAction({
         query: exportQuery.trim() || undefined,
-        city: exportCity === "all" ? undefined : exportCity,
-        ownerName: exportOwnerName === "all" ? undefined : exportOwnerName,
-        stage: exportStage === "all" ? undefined : exportStage,
-        pipeline: exportPipeline === "all" ? undefined : exportPipeline,
-        leadStatus: exportLeadStatus === "all" ? undefined : exportLeadStatus,
-        opportunitySource: exportOpportunitySource === "all" ? undefined : exportOpportunitySource,
-        startDate: exportStartDate || undefined,
-        endDate: exportEndDate || undefined,
-        limit: Number.isNaN(parsedLimit) ? 2000 : parsedLimit,
+        conversion: exportConversion.length ? exportConversion : undefined,
+        events: exportEvents.length ? exportEvents : undefined,
+        conversionDateStart: exportConversionDateStart || undefined,
+        conversionDateEnd: exportConversionDateEnd || undefined,
+        propertyReference: exportPropertyReference.length ? exportPropertyReference : undefined,
+        totalConversions: exportTotalConversions.length ? exportTotalConversions : undefined,
+        city: exportCity.length ? exportCity : undefined,
+        state: exportState.length ? exportState : undefined,
+        limit: Number.isNaN(parsedLimit) ? Math.max(exportRegisteredCount, 1) : parsedLimit,
       })
 
       if (!response.success) {
@@ -910,14 +1042,15 @@ export default function ImportLeadsPage() {
 
   const handleResetExportFilters = () => {
     setExportQuery("")
-    setExportCity("all")
-    setExportOwnerName("all")
-    setExportStage("all")
-    setExportPipeline("all")
-    setExportLeadStatus("all")
-    setExportOpportunitySource("all")
-    setExportStartDate("")
-    setExportEndDate("")
+    setExportConversion([])
+    setExportEvents([])
+    setExportConversionDateStart("")
+    setExportConversionDateEnd("")
+    setExportPropertyReference([])
+    setExportTotalConversions([])
+    setExportCity([])
+    setExportState([])
+    setExportLimit(String(Math.max(exportRegisteredCount, 1)))
   }
 
   const handleExportRows = (rowsToExport: ExportLeadRow[]) => {
@@ -1350,6 +1483,100 @@ export default function ImportLeadsPage() {
 
           {activeTab === "export" && (
             <section className="space-y-6">
+              <div className="relative overflow-hidden rounded-[2rem] border border-white/50 bg-white/60 shadow-[0_16px_50px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)", backgroundSize: "18px 18px" }} />
+                <div className="relative grid gap-6 p-6 lg:p-8">
+                  <div className="max-w-3xl space-y-3">
+                    <Badge className="w-fit rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-emerald-700 dark:text-emerald-300">
+                      <Database className="mr-1.5 h-3.5 w-3.5" /> Métricas gerais da base RD Station
+                    </Badge>
+                    <h2 className="text-3xl font-black tracking-tight text-foreground lg:text-5xl">
+                      Conversões e dados do banco em tempo real para orientar sua exportação.
+                    </h2>
+                    <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground lg:text-base">
+                      Estes indicadores são independentes dos filtros da busca e representam a visão ampla da tabela rd_station_leads.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      {
+                        label: "Leads no banco",
+                        value: databaseMetrics.totalRegistered,
+                        icon: Database,
+                        glow: "from-emerald-500/25 via-emerald-500/10 to-transparent",
+                      },
+                      {
+                        label: "Leads com número",
+                        value: databaseMetrics.leadsWithNumber,
+                        icon: Phone,
+                        glow: "from-sky-500/25 via-sky-500/10 to-transparent",
+                      },
+                      {
+                        label: "Origens de conversão",
+                        value: databaseMetrics.uniqueConversionOrigins,
+                        icon: Activity,
+                        glow: "from-amber-500/25 via-amber-500/10 to-transparent",
+                      },
+                      {
+                        label: "Eventos únicos",
+                        value: databaseMetrics.conversionEvents,
+                        icon: Sparkles,
+                        glow: "from-cyan-500/25 via-cyan-500/10 to-transparent",
+                      },
+                      {
+                        label: "Faixas de conversão",
+                        value: databaseMetrics.conversionBuckets,
+                        icon: CheckCircle2,
+                        glow: "from-lime-500/25 via-lime-500/10 to-transparent",
+                      },
+                      {
+                        label: "Referências únicas",
+                        value: databaseMetrics.uniqueReferences,
+                        icon: FileSpreadsheet,
+                        glow: "from-rose-500/25 via-rose-500/10 to-transparent",
+                      },
+                      {
+                        label: "Cidades únicas",
+                        value: databaseMetrics.uniqueCities,
+                        icon: MapPin,
+                        glow: "from-violet-500/25 via-violet-500/10 to-transparent",
+                      },
+                      {
+                        label: "Estados únicos",
+                        value: databaseMetrics.uniqueStates,
+                        icon: ShieldCheck,
+                        glow: "from-indigo-500/25 via-indigo-500/10 to-transparent",
+                      },
+                    ].map((metric, index) => (
+                      <div
+                        key={metric.label}
+                        className="group relative overflow-hidden rounded-[1.2rem] border border-white/60 bg-white/75 px-4 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.06)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_18px_45px_rgba(15,23,42,0.12)] dark:border-white/10 dark:bg-white/5"
+                        style={{ transitionDelay: `${index * 40}ms` }}
+                      >
+                        <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br opacity-80", metric.glow)} />
+                        <div className="relative flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{metric.label}</p>
+                            <p className="mt-1 text-2xl font-black tracking-tight">{metric.value}</p>
+                          </div>
+                          <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/80 text-foreground shadow-sm dark:border-white/15 dark:bg-white/10">
+                            <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-ping rounded-full bg-emerald-500" />
+                            <metric.icon className="h-4 w-4" />
+                          </div>
+                        </div>
+                        <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-sky-500 transition-all duration-700 ease-out"
+                            style={{ width: `${Math.min(100, 30 + (index + 1) * 8)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-[2rem] border border-white/50 bg-white/65 p-6 shadow-[0_16px_50px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/10 dark:bg-white/[0.04]">
                 <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -1358,7 +1585,7 @@ export default function ImportLeadsPage() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-emerald-700 dark:text-emerald-300">
-                      {exportRows.length} resultados
+                      {filteredExportRows.length} resultados
                     </Badge>
                     <Badge className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-sky-700 dark:text-sky-300">
                       {activeExportFilterCount} filtros ativos
@@ -1366,149 +1593,19 @@ export default function ImportLeadsPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Busca</Label>
-                    <Input
-                      value={exportQuery}
-                      onChange={(event) => setExportQuery(event.target.value)}
-                      placeholder="Nome, email, telefone, cidade, referência..."
+                <div className="rounded-[1.5rem] border border-white/60 bg-white/55 p-4 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Painel de filtros</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Visual limpo por padrão. Abra o pop-up para ajustar os filtros principais.</p>
+                    </div>
+                    <Button
+                      variant="outline"
                       className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Cidade</Label>
-                    <Select value={exportCity} onValueChange={setExportCity}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todas" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todas</SelectItem>
-                        {exportFilterOptions.cityOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Responsável</Label>
-                    <Select value={exportOwnerName} onValueChange={setExportOwnerName}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todos" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todos</SelectItem>
-                        {exportFilterOptions.ownerOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Etapa/Funil</Label>
-                    <Select value={exportStage} onValueChange={setExportStage}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todas" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todas</SelectItem>
-                        {exportFilterOptions.stageOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Funil CRM</Label>
-                    <Select value={exportPipeline} onValueChange={setExportPipeline}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todos" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todos</SelectItem>
-                        {exportFilterOptions.pipelineOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Status do Lead</Label>
-                    <Select value={exportLeadStatus} onValueChange={setExportLeadStatus}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todos" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todos</SelectItem>
-                        {exportFilterOptions.leadStatusOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Origem da Oportunidade</Label>
-                    <Select value={exportOpportunitySource} onValueChange={setExportOpportunitySource}>
-                      <SelectTrigger className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                        <SelectValue placeholder="Todas" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todas</SelectItem>
-                        {exportFilterOptions.opportunitySourceOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Data inicial</Label>
-                    <Input
-                      type="date"
-                      value={exportStartDate}
-                      onChange={(event) => setExportStartDate(event.target.value)}
-                      className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Data final</Label>
-                    <Input
-                      type="date"
-                      value={exportEndDate}
-                      onChange={(event) => setExportEndDate(event.target.value)}
-                      className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Limite de linhas</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={10000}
-                      value={exportLimit}
-                      onChange={(event) => setExportLimit(event.target.value)}
-                      className="h-11 rounded-2xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
-                    />
+                      onClick={() => setIsExportFiltersOpen(true)}
+                    >
+                      <Sparkles className="mr-2 h-4 w-4" /> Selecionar filtros
+                    </Button>
                   </div>
                 </div>
 
@@ -1535,8 +1632,8 @@ export default function ImportLeadsPage() {
                   <Button
                     variant="outline"
                     className="h-11 rounded-2xl border-white/60 bg-white/70 font-bold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
-                    onClick={() => handleExportRows(exportRows)}
-                    disabled={!exportRows.length}
+                    onClick={() => handleExportRows(filteredExportRows)}
+                    disabled={!filteredExportRows.length}
                   >
                     <FileUp className="mr-2 h-4 w-4" /> Exportar todos
                   </Button>
@@ -1565,6 +1662,159 @@ export default function ImportLeadsPage() {
                     <p className="text-sm font-medium leading-relaxed">{exportError}</p>
                   </div>
                 )}
+
+                <Dialog open={isExportFiltersOpen} onOpenChange={setIsExportFiltersOpen}>
+                  <DialogContent className="max-h-[90vh] max-w-6xl overflow-hidden rounded-[1.8rem] border-white/60 bg-white/95 p-0 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/95" showCloseButton={false}>
+                    <div className="flex h-full flex-col">
+                      <DialogHeader className="border-b border-white/60 px-6 py-5 dark:border-white/10">
+                        <DialogTitle className="text-xl font-black tracking-tight">Seleção de filtros</DialogTitle>
+                        <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
+                          Configure os filtros principais da tabela rd_station_leads sem poluir a tela principal.
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="min-h-0 flex-1 space-y-4 overflow-auto px-6 py-5">
+                        <div className="rounded-[1.5rem] border border-white/60 bg-white/55 p-4 dark:border-white/10 dark:bg-white/5">
+                          <div className="mb-3 flex items-center justify-between gap-2">
+                            <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Filtros principais</p>
+                            <span className="text-[11px] font-semibold text-muted-foreground">Conversão, eventos, data, referência, total, cidade e estado</span>
+                          </div>
+
+                          <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Registros</p>
+                              <p className="mt-1 text-lg font-black tracking-tight">{exportRegisteredCount}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Conversões únicas</p>
+                              <p className="mt-1 text-lg font-black tracking-tight">{exportFilterOptions.conversionOptions.length}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Referências únicas</p>
+                              <p className="mt-1 text-lg font-black tracking-tight">{exportFilterOptions.propertyReferenceOptions.length}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Cidades/Estados</p>
+                              <p className="mt-1 text-lg font-black tracking-tight">{exportFilterOptions.cityOptions.length}/{exportFilterOptions.stateOptions.length}</p>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))]">
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Busca</Label>
+                              <Input
+                                value={exportQuery}
+                                onChange={(event) => setExportQuery(event.target.value)}
+                                placeholder="Nome, email, telefone, cidade, referência..."
+                                className="h-10 rounded-xl border-white/60 bg-white/70 text-xs font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+                              />
+                            </div>
+
+                            <MultiSelectField
+                              label="Conversão"
+                              options={exportFilterOptions.conversionOptions}
+                              selectedValues={exportConversion}
+                              onChange={setExportConversion}
+                              placeholder="Todas"
+                            />
+
+                            <MultiSelectField
+                              label="Eventos"
+                              options={exportFilterOptions.eventOptions}
+                              selectedValues={exportEvents}
+                              onChange={setExportEvents}
+                              placeholder="Todos"
+                            />
+
+                            <MultiSelectField
+                              label="Referência de Imóveis"
+                              options={exportFilterOptions.propertyReferenceOptions}
+                              selectedValues={exportPropertyReference}
+                              onChange={setExportPropertyReference}
+                              placeholder="Todas"
+                            />
+
+                            <MultiSelectField
+                              label="Total de Conversões"
+                              options={exportFilterOptions.totalConversionOptions}
+                              selectedValues={exportTotalConversions}
+                              onChange={setExportTotalConversions}
+                              placeholder="Todos"
+                            />
+
+                            <MultiSelectField
+                              label="Cidade"
+                              options={exportFilterOptions.cityOptions}
+                              selectedValues={exportCity}
+                              onChange={setExportCity}
+                              placeholder="Todas"
+                            />
+
+                            <MultiSelectField
+                              label="Estado"
+                              options={exportFilterOptions.stateOptions}
+                              selectedValues={exportState}
+                              onChange={setExportState}
+                              placeholder="Todos"
+                            />
+
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Data da conversão (inicial)</Label>
+                              <Input
+                                type="date"
+                                value={exportConversionDateStart}
+                                onChange={(event) => setExportConversionDateStart(event.target.value)}
+                                className="h-10 rounded-xl border-white/60 bg-white/70 text-xs font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Data da conversão (final)</Label>
+                              <Input
+                                type="date"
+                                value={exportConversionDateEnd}
+                                onChange={(event) => setExportConversionDateEnd(event.target.value)}
+                                className="h-10 rounded-xl border-white/60 bg-white/70 text-xs font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Limite de linhas</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={exportLimit}
+                                onChange={(event) => setExportLimit(event.target.value)}
+                                className="h-10 rounded-xl border-white/60 bg-white/70 text-xs font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-3 border-t border-white/60 px-6 py-4 dark:border-white/10">
+                        <Button
+                          variant="outline"
+                          className="h-10 rounded-xl border-white/60 bg-white/70 font-semibold backdrop-blur-xl dark:border-white/10 dark:bg-white/5"
+                          onClick={handleResetExportFilters}
+                        >
+                          Limpar filtros
+                        </Button>
+                        <Button
+                          className="h-10 rounded-xl bg-emerald-600 font-bold text-white hover:bg-emerald-700"
+                          onClick={async () => {
+                            await handleSearchForExport()
+                            setIsExportFiltersOpen(false)
+                          }}
+                          disabled={isLoadingExport || isLoadingFilterOptions}
+                        >
+                          {isLoadingExport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Aplicar e fechar
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
 
               <div className="rounded-[2rem] border border-white/50 bg-white/65 p-6 shadow-[0_16px_50px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/10 dark:bg-white/[0.04]">
@@ -1574,7 +1824,7 @@ export default function ImportLeadsPage() {
                     <h3 className="mt-1 text-xl font-black tracking-tight">Resultados filtrados</h3>
                   </div>
                   <Badge className="rounded-full border border-white/50 bg-black/[0.04] px-3 py-1.5 text-foreground dark:border-white/10 dark:bg-white/5">
-                    Mostrando {Math.min(exportRows.length, 20)} de {exportRows.length}
+                    Mostrando {Math.min(filteredExportRows.length, 20)} de {filteredExportRows.length}
                   </Badge>
                 </div>
 
@@ -1591,7 +1841,7 @@ export default function ImportLeadsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {exportRows.length > 0 ? (
+                        {filteredExportRows.length > 0 ? (
                           previewExportRows.map((lead, index) => (
                             <tr key={`${lead.id}-${index}`} className={cn(index % 2 === 0 ? "bg-black/[0.015] dark:bg-white/[0.02]" : "bg-transparent")}>
                               <td className="border-b border-white/50 px-4 py-3 text-muted-foreground whitespace-nowrap dark:border-white/10">{String(lead["Nome"] ?? "-")}</td>

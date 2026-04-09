@@ -31,33 +31,33 @@ const importBatchSchema = z.object({
 
 const exportLeadsFilterSchema = z.object({
   query: z.string().optional(),
-  city: z.string().optional(),
-  ownerName: z.string().optional(),
-  stage: z.string().optional(),
-  pipeline: z.string().optional(),
-  leadStatus: z.string().optional(),
-  opportunitySource: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  limit: z.number().int().min(1).max(10000).optional(),
+  conversion: z.array(z.string()).optional(),
+  events: z.array(z.string()).optional(),
+  conversionDateStart: z.string().optional(),
+  conversionDateEnd: z.string().optional(),
+  propertyReference: z.array(z.string()).optional(),
+  totalConversions: z.array(z.string()).optional(),
+  city: z.array(z.string()).optional(),
+  state: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(1000000).optional(),
 })
 
 type RdFilterOptions = {
+  conversionOptions: string[]
+  eventOptions: string[]
+  propertyReferenceOptions: string[]
+  totalConversionOptions: string[]
   cityOptions: string[]
-  ownerOptions: string[]
-  stageOptions: string[]
-  pipelineOptions: string[]
-  leadStatusOptions: string[]
-  opportunitySourceOptions: string[]
+  stateOptions: string[]
 }
 
 const EMPTY_RD_FILTER_OPTIONS: RdFilterOptions = {
+  conversionOptions: [],
+  eventOptions: [],
+  propertyReferenceOptions: [],
+  totalConversionOptions: [],
   cityOptions: [],
-  ownerOptions: [],
-  stageOptions: [],
-  pipelineOptions: [],
-  leadStatusOptions: [],
-  opportunitySourceOptions: [],
+  stateOptions: [],
 }
 
 function normalizeText(value: string) {
@@ -84,6 +84,23 @@ function parseBoolean(value: string) {
   if (!normalized) return null
   if (["sim", "s", "yes", "true", "1", "aceito", "aceitou"].includes(normalized)) return true
   if (["nao", "não", "n", "no", "false", "0", "nao aceito"].includes(normalized)) return false
+  return null
+}
+
+function parseFlexibleDate(value: unknown) {
+  const raw = String(value ?? "").trim()
+  if (!raw) return null
+
+  const asIso = new Date(raw).getTime()
+  if (!Number.isNaN(asIso)) return asIso
+
+  const brMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (brMatch) {
+    const [, d, m, y] = brMatch
+    const parsed = new Date(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}T00:00:00.000Z`).getTime()
+    return Number.isNaN(parsed) ? null : parsed
+  }
+
   return null
 }
 
@@ -202,14 +219,14 @@ export async function listLeadsForExportAction(input: unknown) {
 
   const {
     query,
+    conversion,
+    events,
+    conversionDateStart,
+    conversionDateEnd,
+    propertyReference,
+    totalConversions,
     city,
-    ownerName,
-    stage,
-    pipeline,
-    leadStatus,
-    opportunitySource,
-    startDate,
-    endDate,
+    state,
     limit,
   } = parsed.data
 
@@ -251,57 +268,71 @@ export async function listLeadsForExportAction(input: unknown) {
     })
   }
 
-  if (city?.trim()) {
-    const normalizedCity = normalizeText(city)
-    filteredRows = filteredRows.filter((row) => normalizeText(String(row["Cidade"] ?? "")) === normalizedCity)
-  }
-
-  if (ownerName?.trim()) {
-    const normalizedOwner = normalizeText(ownerName)
-    filteredRows = filteredRows.filter((row) => normalizeText(String(row["Dono do Lead"] ?? "")).includes(normalizedOwner))
-  }
-
-  if (stage?.trim()) {
-    const normalizedStage = normalizeText(stage)
+  if (conversion?.length) {
+    const selected = conversion.map((value) => normalizeText(value))
     filteredRows = filteredRows.filter((row) => {
-      const stageA = normalizeText(String(row["Estágio no funil"] ?? ""))
-      const stageB = normalizeText(String(row["Etapa do funil de vendas no CRM (última atualização)"] ?? ""))
-      return stageA.includes(normalizedStage) || stageB.includes(normalizedStage)
+      const first = normalizeText(String(row["Origem da primeira conversão"] ?? ""))
+      const last = normalizeText(String(row["Origem da última conversão"] ?? ""))
+      return selected.some((value) => first === value || last === value)
     })
   }
 
-  if (pipeline?.trim()) {
-    const normalizedPipeline = normalizeText(pipeline)
-    filteredRows = filteredRows.filter((row) => normalizeText(String(row["Funil de vendas no CRM (última atualização)"] ?? "")) === normalizedPipeline)
-  }
-
-  if (leadStatus?.trim()) {
-    const normalizedLeadStatus = normalizeText(leadStatus)
-    filteredRows = filteredRows.filter((row) => normalizeText(String(row["Status do Lead:"] ?? "")) === normalizedLeadStatus)
-  }
-
-  if (opportunitySource?.trim()) {
-    const normalizedOpportunitySource = normalizeText(opportunitySource)
-    filteredRows = filteredRows.filter((row) => normalizeText(String(row["Origem da Oportunidade no CRM (última atualização)"] ?? "")) === normalizedOpportunitySource)
-  }
-
-  if (startDate?.trim()) {
-    const start = new Date(`${startDate.trim()}T00:00:00.000Z`).getTime()
+  if (events?.length) {
+    const selected = events.map((value) => normalizeText(value))
     filteredRows = filteredRows.filter((row) => {
-      const value = row["imported_at"]
-      if (!value) return false
-      const parsed = new Date(String(value)).getTime()
-      return !Number.isNaN(parsed) && parsed >= start
+      const rowEvents = normalizeText(String(row["Eventos (Últimos 100)"] ?? ""))
+      return selected.some((value) => rowEvents.includes(value))
     })
   }
 
-  if (endDate?.trim()) {
-    const end = new Date(`${endDate.trim()}T23:59:59.999Z`).getTime()
+  if (propertyReference?.length) {
+    const selected = propertyReference.map((value) => normalizeText(value))
     filteredRows = filteredRows.filter((row) => {
-      const value = row["imported_at"]
-      if (!value) return false
-      const parsed = new Date(String(value)).getTime()
-      return !Number.isNaN(parsed) && parsed <= end
+      const refA = normalizeText(String(row["Referência do Imóvel"] ?? ""))
+      const refB = normalizeText(String(row["Referência"] ?? ""))
+      return selected.some((value) => refA === value || refB === value)
+    })
+  }
+
+  if (totalConversions?.length) {
+    const selected = totalConversions.map((value) => normalizeText(value))
+    filteredRows = filteredRows.filter((row) => {
+      const total = normalizeText(String(row["Total de conversões"] ?? ""))
+      return selected.some((value) => total === value)
+    })
+  }
+
+  if (city?.length) {
+    const selected = city.map((value) => normalizeText(value))
+    filteredRows = filteredRows.filter((row) => {
+      const rowCity = normalizeText(String(row["Cidade"] ?? ""))
+      return selected.some((value) => rowCity === value)
+    })
+  }
+
+  if (state?.length) {
+    const selected = state.map((value) => normalizeText(value))
+    filteredRows = filteredRows.filter((row) => {
+      const rowState = normalizeText(String(row["Estado"] ?? ""))
+      return selected.some((value) => rowState === value)
+    })
+  }
+
+  if (conversionDateStart?.trim()) {
+    const start = new Date(`${conversionDateStart.trim()}T00:00:00.000Z`).getTime()
+    filteredRows = filteredRows.filter((row) => {
+      const first = parseFlexibleDate(row["Data da primeira conversão"])
+      const last = parseFlexibleDate(row["Data da última conversão"])
+      return (first !== null && first >= start) || (last !== null && last >= start)
+    })
+  }
+
+  if (conversionDateEnd?.trim()) {
+    const end = new Date(`${conversionDateEnd.trim()}T23:59:59.999Z`).getTime()
+    filteredRows = filteredRows.filter((row) => {
+      const first = parseFlexibleDate(row["Data da primeira conversão"])
+      const last = parseFlexibleDate(row["Data da última conversão"])
+      return (first !== null && first <= end) || (last !== null && last <= end)
     })
   }
 
@@ -327,64 +358,106 @@ export async function listLeadsForExportAction(input: unknown) {
 }
 
 export async function listExportFilterOptionsAction() {
-  const { data, error } = await supabaseAdmin
+  const { count, error: countError } = await supabaseAdmin
     .from("rd_station_leads")
-    .select([
-      '"Cidade"',
-      '"Dono do Lead"',
-      '"Estágio no funil"',
-      '"Etapa do funil de vendas no CRM (última atualização)"',
-      '"Funil de vendas no CRM (última atualização)"',
-      '"Status do Lead:"',
-      '"Origem da Oportunidade no CRM (última atualização)"',
-    ].join(","))
-    .limit(5000)
+    .select("id", { count: "exact", head: true })
 
-  if (error) {
-    return {
-      success: false,
-      error: error.message,
-      options: EMPTY_RD_FILTER_OPTIONS,
+  const selectFields = [
+    '"Origem da primeira conversão"',
+    '"Origem da última conversão"',
+    '"Eventos (Últimos 100)"',
+    '"Referência do Imóvel"',
+    '"Referência"',
+    '"Total de conversões"',
+    '"Cidade"',
+    '"Estado"',
+    '"Telefone"',
+    '"Celular"',
+    '"Celular.1"',
+  ].join(",")
+
+  const pageSize = 1000
+  let from = 0
+  const expectedTotal = countError ? null : (count || 0)
+  let hasMore = true
+  let loadedRows = 0
+
+  const conversionSet = new Set<string>()
+  const eventSet = new Set<string>()
+  const propertyRefSet = new Set<string>()
+  const totalConversionSet = new Set<string>()
+  const citySet = new Set<string>()
+  const stateSet = new Set<string>()
+  let leadsWithNumber = 0
+
+  while (hasMore) {
+    const { data, error } = await supabaseAdmin
+      .from("rd_station_leads")
+      .select(selectFields)
+      .range(from, from + pageSize - 1)
+
+    if (error) {
+      return {
+        success: false,
+        error: error.message,
+        options: EMPTY_RD_FILTER_OPTIONS,
+        totalRegistered: 0,
+      }
+    }
+
+    const rows = data || []
+    if (!rows.length) {
+      break
+    }
+
+    loadedRows += rows.length
+
+    rows.forEach((row) => {
+      const conversionA = String(row["Origem da primeira conversão"] ?? "").trim()
+      const conversionB = String(row["Origem da última conversão"] ?? "").trim()
+      const events = String(row["Eventos (Últimos 100)"] ?? "").trim()
+      const propertyRefA = String(row["Referência do Imóvel"] ?? "").trim()
+      const propertyRefB = String(row["Referência"] ?? "").trim()
+      const totalConv = String(row["Total de conversões"] ?? "").trim()
+      const city = String(row["Cidade"] ?? "").trim()
+      const state = String(row["Estado"] ?? "").trim()
+      const phone = String(row["Telefone"] ?? "").trim()
+      const mobile = String(row["Celular"] ?? "").trim()
+      const mobileAlt = String(row["Celular.1"] ?? "").trim()
+
+      if (conversionA) conversionSet.add(conversionA)
+      if (conversionB) conversionSet.add(conversionB)
+      if (events) eventSet.add(events)
+      if (propertyRefA) propertyRefSet.add(propertyRefA)
+      if (propertyRefB) propertyRefSet.add(propertyRefB)
+      if (totalConv) totalConversionSet.add(totalConv)
+      if (city) citySet.add(city)
+      if (state) stateSet.add(state)
+      if (phone || mobile || mobileAlt) leadsWithNumber += 1
+    })
+
+    from += rows.length
+    if (expectedTotal !== null) {
+      hasMore = loadedRows < expectedTotal
+    } else {
+      hasMore = rows.length > 0
     }
   }
-
-  const city = new Set<string>()
-  const owners = new Set<string>()
-  const stages = new Set<string>()
-  const pipelines = new Set<string>()
-  const leadStatuses = new Set<string>()
-  const opportunitySources = new Set<string>()
-
-  ;(data || []).forEach((row) => {
-    const cityValue = String(row["Cidade"] ?? "").trim()
-    const ownerValue = String(row["Dono do Lead"] ?? "").trim()
-    const stageValueA = String(row["Estágio no funil"] ?? "").trim()
-    const stageValueB = String(row["Etapa do funil de vendas no CRM (última atualização)"] ?? "").trim()
-    const pipelineValue = String(row["Funil de vendas no CRM (última atualização)"] ?? "").trim()
-    const leadStatusValue = String(row["Status do Lead:"] ?? "").trim()
-    const opportunitySourceValue = String(row["Origem da Oportunidade no CRM (última atualização)"] ?? "").trim()
-
-    if (cityValue) city.add(cityValue)
-    if (ownerValue) owners.add(ownerValue)
-    if (stageValueA) stages.add(stageValueA)
-    if (stageValueB) stages.add(stageValueB)
-    if (pipelineValue) pipelines.add(pipelineValue)
-    if (leadStatusValue) leadStatuses.add(leadStatusValue)
-    if (opportunitySourceValue) opportunitySources.add(opportunitySourceValue)
-  })
 
   const sortText = (values: Set<string>) => Array.from(values).sort((a, b) => a.localeCompare(b, "pt-BR"))
 
   return {
     success: true,
     options: {
-      cityOptions: sortText(city),
-      ownerOptions: sortText(owners),
-      stageOptions: sortText(stages),
-      pipelineOptions: sortText(pipelines),
-      leadStatusOptions: sortText(leadStatuses),
-      opportunitySourceOptions: sortText(opportunitySources),
+      conversionOptions: sortText(conversionSet),
+      eventOptions: sortText(eventSet),
+      propertyReferenceOptions: sortText(propertyRefSet),
+      totalConversionOptions: sortText(totalConversionSet),
+      cityOptions: sortText(citySet),
+      stateOptions: sortText(stateSet),
     },
+    totalRegistered: countError ? loadedRows : (count || 0),
+    leadsWithNumber,
   }
 }
 
