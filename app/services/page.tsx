@@ -451,9 +451,16 @@ export default function Central63App() {
       // Mapeamento Final
       // ---------------------------------------------------------
       const mappedLeads = itemsWithSafeIds.map((item: any, index: number) => {
-        const linkedLead = item.lead_pmw || item.lead_aux || {}
+        const leadLinkKey = Object.keys(item).find(key => 
+          key.startsWith('lead_') && 
+          typeof item[key] === 'object' && 
+          item[key] !== null
+        );
         
-        const clientName = linkedLead.nome || "Cliente";
+        let linkedData = item[tableLead] || (leadLinkKey ? item[leadLinkKey] : {});
+        if (Array.isArray(linkedData)) linkedData = linkedData[0] || {};
+        
+        const clientName = (linkedData as any).nome || (item as any).cliente_nome || (item as any).nome_cliente || "Cliente";
         const fullIdToCheck = `${currentPrefix}_${item.safeId}`;
         const saleInfo = salesDataMap.get(fullIdToCheck); 
         
@@ -489,7 +496,7 @@ export default function Central63App() {
           id: item.safeId, 
           sourceTable: isPmw ? "atendimento_pmw" : "atendimento_aux",
           clientName: clientName,
-          clientAvatar: linkedLead.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(clientName)}&background=0D8ABC&color=fff&bold=true`,
+          clientAvatar: (linkedData as any).avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(clientName)}&background=0D8ABC&color=fff&bold=true`,
           history: resolvedHistory,
           broker: {
             id: 0, 
@@ -510,8 +517,8 @@ export default function Central63App() {
           updatedAt: new Date().toLocaleDateString("pt-BR"),
           lastUpdateISO: new Date().toISOString(),
           leadData: {
-            email: linkedLead.email || "",
-            phone: linkedLead.telefone1 || "",
+            email: (linkedData as any).email || "",
+            phone: (linkedData as any).telefone1 || "",
             origin: item.midia || "Desconhecido",
             createdAt: formattedDate
           },
